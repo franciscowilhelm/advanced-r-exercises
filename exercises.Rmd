@@ -5,6 +5,8 @@ output: html_notebook
 
  Exercises
 
+## Chapter 4 - Subsetting
+
 Brainstorm as many ways as possible to extract the third value from the cyl variable in the mtcars dataset.
 
 ```{r}
@@ -46,7 +48,7 @@ mtcars3 <- mtcars[samplerows[1]:samplerows[2],]
 # resort columns alphabetically 
 mtcars4 <- mtcars[,colnames(mtcars)[order(colnames(mtcars))]] 
 ```
-
+## Flow Control
 
 What type of vector does each of the following calls to ifelse() return?
 
@@ -113,6 +115,8 @@ for (i in 1:3) {
 ```
 index seems to be updated at the end of the iteration, as printing i returns the modified i value.
 
+## 6 Functions
+
 What does the following code return?
 ```{r}
 x <- 10
@@ -145,7 +149,7 @@ f2 <- function(a, b) {
 f2(10, stop("This is an error!"))
 ```
 
-# 9 Functionals
+## 9 Functionals
 
  9.2.6 Exercises
 
@@ -319,4 +323,346 @@ tmp <- map2(cyls, paths, write.csv)
 ```
 
 Returns NULL, but strangely named?
+
+ 9.6.3 Exercises
+
+Why isn’t is.na() a predicate function? What base R function is closest to being a predicate version of is.na()? 
+
+- na is not a data type, whereas is.numeric etc. are (they are true for the whole variable/column/object). Closer would be all(is.na()) or any(is.na()).
+
+
+simple_reduce() has a problem when x is length 0 or length 1. Describe the source of the problem and how you might go about fixing it.
+
+```{r}
+simple_reduce <- function(x, f) {
+  out <- x[[1]]
+  for (i in seq(2, length(x))) {
+    out <- f(out, x[[i]])
+  }
+  out
+}
+```
+
+- There is no second element to x, or no first element even, causing the function to fail. One would need to check the length first and return an error or run different code using if.
+
+Implement the span() function from Haskell: given a list x and a predicate function f, span(x, f) returns the location of 
+the longest sequential run of elements where the predicate is true. (Hint: you might find rle() helpful.)
+
+```{r}
+
+
+span <- function(x, f) {
+  tmp <- rle(x)
+  tmp$endpos <- cumsum(tmp$lengths)
+  tmp$beginpos <- tmp$endpos - (tmp$lengths-1)
+  
+  idx <- tmp$lengths[tmp$values == f] #length of sequences for which predicate is true
+  idx <- idx[idx == max(idx)] #return longest
+  idx <- tmp$lengths == idx & tmp$values == f
+  out <- c(tmp$beginpos[idx], tmp$endpos[idx])
+}
+
+# works only where there is a unique solution
+x <- c(1,2,3,4,4,4,3,2,1)
+print(span(x, 4))
+
+x <- c("a", "a", "a", "b", "b", "c")
+print(span(x, "a"))
+```
+
+- Not sure if this was meant to be solved using a reduce-esque solution, but with rle this works well.
+
+
+Implement arg_max(). It should take a function and a vector of inputs, and return the elements of the input where the function returns the highest value. For example, arg_max(-10:5, function(x) x ^ 2) should return -10. arg_max(-5:5, function(x) x ^ 2) should return c(-5, 5). Also implement the matching arg_min() function.
+
+```{r}
+source("span.R")
+arg_max(-10:5, function(x) x ^ 2)
+arg_max(-5:5, function(x) x ^ 2)
+
+arg_min(-10:5, function(x) x ^ 2)
+arg_min(-5:5, function(x) x ^ 2)
+```
+
+
+The function below scales a vector so it falls in the range [0, 1]. How would you apply it to every column of a data frame? How would you apply it to every numeric column in a data frame?
+
+```{r}
+scale01 <- function(x) {
+  rng <- range(x, na.rm = TRUE)
+  (x - rng[1]) / (rng[2] - rng[1])
+}
+```
+
+Solution:
+```{r}
+x <- as_tibble(mtcars)
+out <- modify(x, scale01)
+out_num <- modify_if(x, is.numeric, scale01)
+```
+
+## Chapter 10
+
+ 10.2.6 Exercises
+
+    The definition of force() is simple:Why is it better to force(x) instead of just x?
+    
+- Because it becomes clear why x is called, not for its expression but (usually) to avoid problems with lazy evaluation.
+
+Base R contains two function factories, approxfun() and ecdf(). Read their documentation and experiment to figure out what the functions do and what they return.
+
+```{r}
+ecdf_mpg <- ecdf(mtcars$mpg)
+ecdf_hp <- ecdf(mtcars$hp)
+
+ecdf_hp(mtcars$hp)
+ecdf_hp(mtcars$mpg)
+```
+- ecdf allow further input vectors that differ from the original vector on which the function was based, and then return the percentiles for that new vector given their relative position to the original vector.
+approxfun similar interpolates data points, the interpolation function is generated based upon the vector with which it was created.
+
+Create a function pick() that takes an index, i, as an argument and returns a function with an argument x that subsets x with i.
+
+```{r}
+pick <- function(i) {
+  function(x) {
+    x[i]
+  }
+}
+
+pick_first <- pick(1)
+pick_first(mtcars)
+
+lapply(mtcars, pick(5))
+# should be equivalent to
+lapply(mtcars, function(x) x[[5]])
+```
+
+Create a function that creates functions that compute the ithcentral moment of a numeric vector. You can test it by running the following code:
+
+- skipped
+
+What happens if you don’t use a closure? Make predictions, then verify with the code below.
+
+```{r}
+i <- 0
+new_counter2 <- function() {
+  i <<- i + 1
+  i
+}
+```
+
+- Question is a bit vague. But he may be refering to a factory that does not use a closure (something like a creation of an environment); then the super-assignment should map to the GLOBAL environment (as this is the next parent). Indeed, calling new_counter2 modifies i in the global env (which is discouraged ofc).
+
+What happens if you use <- instead of <<-? Make predictions, then verify with the code below.
+
+```{r}
+new_counter3 <- function() {
+  i <- 0
+  function() {
+    i <- i + 1
+    i
+  }
+}
+```
+
+- It should stay with the environemnt of the anonymous function, therefore not do anything at all.
+
+```{r}
+y <- c(12345, 123456, 1234567)
+library(scales)
+comma_format()(y)
+```
+
+In boot_model(), why don’t I need to force the evaluation of df or model?
+
+- Df is used and not just a promise, model (asumming he means mod) is executed each time the function factory is called; so no need to force().
+
+Why might you formulate the Box-Cox transformation like this?
+```{r}
+boxcox3 <- function(x) {
+  function(lambda) {
+    if (lambda == 0) {
+      log(x)
+    } else {
+      (x ^ lambda - 1) / lambda
+    }
+  }  
+}
+# for comparison
+boxcox2 <- function(lambda) {
+  if (lambda == 0) {
+    function(x) log(x)
+  } else {
+    function(x) (x ^ lambda - 1) / lambda
+  }
+}
+
+```
+
+- boxcox2 creates a function that takes x as argument; lambda is passed to the function factory. with boxcox3, the target variable is passed to the funciont factory, and the created function takes lambda as the argument.
+
+```{r}
+x <- mtcars$hp
+boxcox_fn <- boxcox2(0.5)
+boxcox_fn(x)
+
+boxcox3_fn <- boxcox3(x)
+boxcox3_fn(0.5)
+```
+
+Why don’t you need to worry that boot_permute() stores a copy of the data inside the function that it generates?
+
+```{r}
+boot_permute <- function(df, var) {
+  n <- nrow(df)
+  force(var)
+  
+  function() {
+    col <- df[[var]]
+    col[sample(n, replace = TRUE)]
+  }
+}
+
+boot_mtcars1 <- boot_permute(mtcars, "mpg")
+head(boot_mtcars1())
+```
+
+- In the boot_permute environemnt var is forced, but that is just the name. Only the inner function() environment will hold data, but that is only called when the function is executed.
+ 
+ 
+
+Which of the following commands is equivalent to with(x, f(z))?
+
+    x$f(x$z).
+    f(x$z).
+    x$f(z).
+    f(z).
+    It depends.
+
+It depends, because with will start looking in the next higher order environment after looking in its local environment (that is created by "with"). In the example we had a function "f" in the local environment, but if there is none it might look in the next environments.
+
+Compare and contrast the effects of env_bind() vs. attach() for the following code.
+```{r}
+funs <- list(
+  mean = function(x) mean(x, na.rm = TRUE),
+  sum = function(x) sum(x, na.rm = TRUE)
+)
+
+attach(funs)
+#> The following objects are masked from package:base:
+#> 
+#>     mean, sum
+mean <- function(x) stop("Hi!")
+detach(funs)
+
+library(rlang)
+env_bind(globalenv(), !!!funs)
+mean <- function(x) stop("Hi!") 
+env_unbind(globalenv(), names(funs))
+```
+
+The first one leaves the mean in global env, the second one deletes it.
+ 
+## Chapter 11 Function operators
+
+Base R provides a function operator in the form of Vectorize(). What does it do? When might you use it?
+
+```{r}
+vrep <- Vectorize(rep.int)
+vrep(1:4, 4:1)
+vrep(times = 1:4, x = 4:1)
+rep(1:4,4:1)
+
+f1 <- function(x = 1:3, y) c(x, y)
+vf <- Vectorize(f1, SIMPLIFY = FALSE)
+f1(1:3, 1:3)
+vf(1:3, 1:3)
+vf(y = 1:3) # Only vectorizes y, not x
+```
+- Modifies the original function in that it vectorizes it; specifically, it is a wrapper for mapply(). All arguments specified in vectorize.args become required; the output of the vectorized function becomes of the form of mapply, with a list per input element (although simplify m,ay change that). See the comparison of vrep to rep. vf shows that the output changes not just in form but also in content. See that each element of the arguemnts is mapped over, similar to map().
+I guess it might be useful to use it when you want the output to be of such a form.
+
+Read the source code for possibly(). How does it work?
+
+
+Read the source code for safely(). How does it work?
+
+- i cant find them.
+
+ Exercises
+
+```{r eval = FALSE}
+walk2(
+  urls, path, 
+  download.file %>% dot_every(10) %>% delay_by(0.1), 
+  quiet = TRUE
+)
+```
+
+
+Weigh the pros and cons of download.file %>% dot_every(10) %>% delay_by(0.1) versus download.file %>% delay_by(0.1) %>% dot_every(10).
+
+- will the amount of delay differ? first setting dot_every will also delay with the dot function, which we probably dont want. But then again dot_every is a function operator that modifies the function before, but its not two functions running through delay_by. So probably not.
+
+Should you memoise file.download()? Why or why not?
+
+- Not if you expect things to change; otherwise it may be sensible.
+
+Create a function operator that reports whenever a file is created or deleted in the working directory, using dir() and setdiff(). What other global function effects might you want to track?
+
+- how is it supposed to run? every few seconds? How would a function operator do this, would it modify dir?
+```{r}
+
+```
+
+
+Write a function operator that logs a timestamp and message to a file every time a function is run.
+
+```{r}
+logfun <- function(f, filename) {
+  force(f)
+  function(...) {
+    msg <- paste0(as.character(substitute(f)), " was run at ", Sys.time())
+    write(msg, paste0(filename, ".txt"))
+  }
+}
+
+sumlog <- logfun(sum, "sum")
+sumlog(c(1,2))
+
+# works half, because the function name is not returned properly; should also append if the txt exists.
+```
+
+Modify delay_by() so that instead of delaying by a fixed amount of time, it ensures that a certain amount of time has elapsed since the function was last called. That is, if you called g <- delay_by(1, f); g(); Sys.sleep(2); g() there shouldn’t be an extra delay.
+
+```{r}
+# delay_by <- function(f, amount) {
+#   force(f)
+#   force(amount)
+#   
+#   function(...) {
+#     Sys.sleep(amount)
+#     f(...)
+#   }
+# }
+
+delay_by <- function(f, amount) {
+  force(f)
+  force(amount)
+  time <- Sys.time()
+  function(...) {
+    if ((Sys.time() - time) >= amount) {
+      Sys.sleep(amount)
+    }
+    time <<- Sys.time()
+    f(...)
+  }
+}
+
+g <- delay_by(runif,1)
+g(10)
+Sys.sleep(2)
+g(10) 
+```
 
