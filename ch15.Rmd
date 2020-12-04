@@ -1,0 +1,251 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# CHapter 15
+
+```{r}
+library(sloop)
+```
+
+- S3 classes have generics, method dispatch, methods.
+
+
+"The generic is a middleman: its job is to define the interface (i.e. the arguments) then find the right implementation for the job. The implementation for a specific class is called a method, and the generic finds that method by performing method dispatch."
+```{r}
+ftype(print)
+
+a <- factor("a", "b", "c")
+print(a) # the job of generic is to find the right method -> print.factor
+print.factor(a) #calling the method directly is discouraged
+```
+
+"Generally, you can identify a method by the presence of . in the function name, but there are a number of important functions in base R that were written before S3, and hence use . to join words."
+
+Exercises
+
+Describe the difference between t.test() and t.data.frame(). When is each function called?
+
+```{r}
+ftype(t.test)
+ftype(t.data.frame)
+
+```
+- t.test is not a method but a standard function that uses generic to find the right method for its input. Its probably an older function and thereforen named inconsistently with the above given rule.
+t.data.frame is the method which generic finds when calling t() on a data.frame.
+
+Make a list of commonly used base R functions that contain . in their name but are not S3 methods.
+```{r}
+ftype(is.numeric)
+ftype(is.call)
+# and a whole lot of other is. ...
+ftype(as.array)
+# as. ... is actually a S3, but not a method but generic. (array is not the method for as).
+```
+
+What does the as.data.frame.data.frame() method do? Why is it confusing? How could you avoid this confusion in your own code?
+
+```{r}
+ftype(as.data.frame.data.frame)
+```
+- Its a method that casts as data.frame when input is data.frame. Its called by generic as.data.frame. Maybe one could have name it differently; as_data_frame.data.frame for example.
+
+
+Describe the difference in behaviour in these two calls.
+
+```{r}
+set.seed(1014)
+some_days <- as.Date("2017-01-31") + sample(10, 5)
+
+mean(some_days)
+#> [1] "2017-02-06"
+mean(unclass(some_days))
+#> [1] 17203
+```
+- some_days holds 5 different dates. Mean in the first call uses generic to find date as correct method; unclass turns the dates into numerics. Probably underneath the date S3 class has a 0 for some arbitrary starting day such as 1-1-1970 and counts upwards.
+
+What class of object does the following code return? What base type is it built on? What attributes does it use?
+```{r}
+x <- ecdf(rpois(100, 10))
+x
+#> Empirical CDF 
+#> Call: ecdf(rpois(100, 10))
+#>  x[1:18] =  2,  3,  4,  ..., 2e+01, 2e+01
+ftype(x)
+str(x)
+```
+- Its built from base type function. Attributes are class, as well as the call from which the function was created (ecdf is a function factory). Class are ecdf and stepfun in addition to function.
+
+What class of object does the following code return? What base type is it built on? What attributes does it use?
+```{r}
+x <- table(rpois(100, 5))
+x
+#> 
+#>  1  2  3  4  5  6  7  8  9 10 
+#>  7  5 18 14 15 15 14  4  5  3
+ftype(x)
+str(x)
+typeof(x)
+class(x)
+```
+
+- A "table" class built from "integer" type.  Attributes are dimnames.
+
+"To avoid foot-bullet intersections when creating your own class, I recommend that you usually provide three functions:
+
+    A low-level constructor, new_myclass(), that efficiently creates new objects with the correct structure.
+
+    A validator, validate_myclass(), that performs more computationally expensive checks to ensure that the object has correct values.
+
+    A user-friendly helper, myclass(), that provides a convenient way for others to create objects of your class.
+
+You don’t need a validator for very simple classes, and you can skip the helper if the class is for internal use only, but you should always provide a constructor."
+
+
+
+
+## Exercises
+Write a constructor for data.frame objects. What base type is a data frame built on? What attributes does it use? What are the restrictions placed on the individual elements? What about the names?
+
+```{r}
+x <- c(0,1,2)
+x <- as.data.frame(x)
+str(x)
+typeof(x)
+str(unclass(x))
+```
+- built from list. Each list entry is named and a vector, with attribute row.names.
+
+```{r}
+new_data_frame <- function(x, row.names) {
+  stopifnot(is.list(x))
+  stopifnot(!is.null(row.names))
+  attr(x, "row.names") <- row.names
+
+  x <- structure(x,
+            class = "data.frame")
+  
+}
+
+out <- new_data_frame(list(a = c(1,2,12)),
+               row.names = c(1L,2L,3L))
+```
+
+
+Enhance my factor() helper to have better behaviour when one or more values is not found in levels. What does base::factor() do in this situation?
+
+```{r}
+# original
+new_factor <- function(x = integer(), levels = character()) {
+  stopifnot(is.integer(x))
+  stopifnot(is.character(levels))
+
+  structure(
+    x,
+    levels = levels,
+    class = "factor"
+  )
+}
+
+validate_factor <- function(x) {
+  values <- unclass(x)
+  levels <- attr(x, "levels")
+
+  if (!all(!is.na(values) & values > 0)) {
+    stop(
+      "All `x` values must be non-missing and greater than zero",
+      call. = FALSE
+    )
+  }
+
+  if (length(levels) < max(values)) {
+    stop(
+      "There must be at least as many `levels` as possible values in `x`",
+      call. = FALSE
+    )
+  }
+
+  x
+}
+
+factor <- function(x = character(), levels = unique(x)) {
+  ind <- match(x, levels)
+  validate_factor(new_factor(ind, levels))
+}
+
+
+
+
+# what happens with levels not found in data in base?
+x <- factor(c("a", "b"), levels = c("a", "b", "c"))
+#empty level, no warning.
+
+# for reverse case
+x <- base::factor(c("a", "b", "c"), levels = c("a", "b"))
+#with too few levels, without any warning!
+
+# try with hadley
+factor(c("a", "b"), levels = c("a", "b", "c"))
+# already works fine
+
+# now, levels without labels
+factor(c("a", "b", "c"), levels = c("a", "b"))
+# cryptic error message
+
+# new
+factor <- function(x = character(), levels = unique(x)) {
+  # if (levels < unique(x) {
+  #   levels <- "<NA>"
+  # }
+  
+  ind <- match(x, levels)
+  if(any(is.na(ind))) {
+    levels = c(levels, "NA")
+    ind[is.na(ind)] <- as.integer(max(ind, na.rm = TRUE)+1)
+    warning("One or more value does not have a matching level.", call. = FALSE)
+  }
+  
+  
+  validate_factor(new_factor(ind, levels))
+}
+
+factor(c("a", "b", "c"), levels = c("a", "b"))
+
+```
+
+- Solution is clunky but gets the job done.
+
+
+Carefully read the source code of factor(). What does it do that my constructor does not?
+- ordered, labels, exclude, nmax, ifany.
+
+Factors have an optional “contrasts” attribute. Read the help for C(), and briefly describe the purpose of the attribute. What type should it have? Rewrite the new_factor() constructor to include this attribute.
+
+```{r}
+# reset contrasts to defaults
+options(contrasts = c("contr.treatment", "contr.poly"))
+tens <- with(warpbreaks, C(tension, poly, 1))
+attributes(tens)
+## tension SHOULD be an ordered factor, but as it is not we can use
+aov(breaks ~ wool + tens + tension, data = warpbreaks)
+
+str(tens)
+```
+- helpful for contrast analyses in AOVs such as ANOVAs.
+- contrasts is an attribute with double type, num matrix, that in turn has dimnames (a list attribute wth two sets of character vectors).
+- I wont build the helper, but the constructor is in factor.R.
+
+Read the documentation for utils::as.roman(). How would you write a constructor for this class? Does it need a validator? What might a helper do?
+
+```{r}
+r1 <- as.roman(12)
+r1 + 3
+str(r1)
+str(unclass(r1))
+```
+
+- Takes integer and turns it into roman numeral. It remains the type integer under the hood, but the class "roman" methods convert to roman numerals.
+- the constructor would be quite simple, as it only takes an integer. A validator is not necessary apart from that (with the exception of maybe 0, which is not represented in Roman), as the roman numeral is not stored in the object itself but the transformation happens in the methods.
+- a helper converts the number to an integer and returns informative errors when input is numeric with decimal points etc.
+
