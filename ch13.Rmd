@@ -3,7 +3,7 @@ title: "R Notebook"
 output: html_notebook
 ---
 
-# CHapter 15
+# CHapter 13
 
 ```{r}
 library(sloop)
@@ -248,4 +248,166 @@ str(unclass(r1))
 - Takes integer and turns it into roman numeral. It remains the type integer under the hood, but the class "roman" methods convert to roman numerals.
 - the constructor would be quite simple, as it only takes an integer. A validator is not necessary apart from that (with the exception of maybe 0, which is not represented in Roman), as the roman numeral is not stored in the object itself but the transformation happens in the methods.
 - a helper converts the number to an integer and returns informative errors when input is numeric with decimal points etc.
+
+
+
+## Generics and methods
+
+Read the source code for t() and t.test() and confirm that t.test() is an S3 generic and not an S3 method. What happens if you create an object with class test and call t() with it? Why?
+
+```{r}
+x <- structure(1:10, class = "test")
+t(x)
+s3_dispatch(t(x))
+s3_methods_generic("t")
+```
+
+- t.test is a generic (uses UseMethod) for method dispatch; its improperly named (its not a method for class "test" of generic "t"). Calling test class with t uses default. 
+
+What generics does the table class have methods for?
+What generics does the ecdf class have methods for?
+Which base generic has the greatest number of defined methods?
+```{r}
+s3_methods_class("table")
+s3_methods_class("ecdf")
+s3_methods_class("numeric")
+s3_methods_class("integer")
+s3_methods_class("double")
+s3_methods_class("Date")
+s3_methods_class("data.frame")
+s3_methods_class("list")
+s3_methods_class("factor")
+
+```
+
+- It seems data.frame has a lot, followed by Date.
+
+Carefully read the documentation for UseMethod() and explain why the following code returns the results that it does. What two usual rules of function evaluation does UseMethod() violate?
+
+```{r}
+g <- function(x) {
+  x <- 10
+  y <- 10
+  UseMethod("g")
+}
+g.default <- function(x) c(x = x, y = y)
+
+x <- 1
+y <- 1
+g(x)
+#>  x  y 
+#>  1 10
+```
+- g(x) uses the supplied x, but the internal x <- 10 is not used. This may be because g.default receives the x not from the environment from which it was called (g) but from the argument passed onto it. Because g.default does not accept the y argument it uses the y from its calling environment.
+It therefore violates the rule that a function call recieves its argument from its calling environment, directly going to the environemnt "in which the generic function (itself) is called".
+What other rule does it violate? I dont know.
+
+From the docs:
+To support this, UseMethod and NextMethod search for methods in two places: in the environment in which the generic function is called, and in the registration data base for the environment in which the generic is defined (typically a namespace). So methods for a generic function need to be available in the environment of the call to the generic, or they must be registered. (It does not matter whether they are visible in the environment in which the generic is defined.) As from R 3.5.0, the registration data base is searched after the top level environment (see topenv) of the calling environment (but before the parents of the top level environment).
+
+6. What are the arguments to [? Why is this a hard question to answer?
+```{r}
+?`[`
+
+x <- c(1,2)
+`[`(x, 1)
+```
+- One usually does not call [] in a normal function way. The argument "x/object" is usually not passed in the classic way but written before thebracket. 
+
+```{r}
+x <- data.frame(x = 1:100, y = 1:100)
+length(x)
+#> [1] 2
+nrow(x)
+#> [1] 100
+str(unclass(x))
+```
+### Object Styles
+
+Categorise the objects returned by lm(), factor(), table(), as.Date(), as.POSIXct() ecdf(), ordered(), I() into the styles described above.
+
+```{r}
+x <- factor(c("a", "b", "a", "b", "c"))
+length(x)
+length(unclass(x))
+
+x <- table(factor(c("a", "b", "a", "b", "c")))
+length(x)
+length(unclass(x))
+
+x <- as.Date(c("2020-03-01", "2021-04-02"))
+length(x)
+length(unclass(x))
+
+x <- ecdf(c(1,2,3,5,6,7,7,8,88,1,9))
+length(x)
+length(unclass(x))
+
+x <- ordered(c("a", "b", "a", "b", "c"))
+length(x)
+length(unclass(x))
+
+x <- I(ordered(c("a", "b", "a", "b", "c")))
+length(x)
+length(unclass(x))
+
+```
+
+- Vector styles (length(x) represents the number of observations in the vector.): factor, as.Date (Dates seem to count from unix first date as 0 upwards, just a num), ordered
+- Report styles (list of equal-length vectors to represent individual components of the object):
+- Scalar styles (typically use a list to represent a single thing. For example, an lm object is a list of length 12 but it represents one model.): lm, ecdf?, arguably table (a table is a single thing).
+
+= I cannot be interpreted, instead indicating that something should be used "as is". Useful in doing things in formulas. 
+
+What would a constructor function for lm objects, new_lm(), look like? Use ?lm and experimentation to figure out the required fields and their types.
+
+The constructor would create an object that has the class "lm" with 12 necessary arguments. The implicit class is a list with a variety of data types in its list entries. Some of the list entries can be NULL. 
+
+## Inheritance
+
+Before we continue we need a bit of vocabulary to describe the relationship between the classes that appear together in a class vector. We’ll say that ordered is a subclass of factor because it always appears before it in the class vector, and, conversely, we’ll say factor is a superclass of ordered.
+
+(Note: much more flexible than inheritance in true OOP languages like Python).
+
+How does [.Date support subclasses? How does it fail to support subclasses?
+
+```{r}
+`[.Date`
+`.Date`
+
+x <- as.Date(c("1970-01-14", "1970-01-17"))
+attr(x,  "superimportant") <- "adrenochrome" 
+str(unclass(x))
+
+x[1]
+str(unclass(x[1]))
+```
+- calls nextMethod and then, on its output, provides the original class as argument to restore the class. This is similar to  vctrs::vec_restore(). Attributes will be dropped however it seems and therefore subclass implementation is limited.
+
+R has two classes for representing date time data, POSIXct and POSIXlt, which both inherit from POSIXt. Which generics have different behaviours for the two classes? Which generics share the same behaviour?
+
+```{r}
+s3_methods_class("POSIXct")
+s3_methods_class("POSIXlt")
+s3_methods_class("POSIXt")
+```
+- For example, `[` are unique to the subclasses, whereas as.character, addition and subtraction is handled by the superclasses methods.
+
+What do you expect this code to return? What does it actually return? Why?
+
+```{r}
+generic2 <- function(x) UseMethod("generic2")
+generic2.a1 <- function(x) "a1"
+generic2.a2 <- function(x) "a2"
+generic2.b <- function(x) {
+  class(x) <- "a1"
+  NextMethod()
+}
+
+generic2(structure(list(), class = c("b", "a2")))
+s3_dispatch(generic2(structure(list(), class = c("b", "a2"))))
+```
+Because method for b changes class to "a1" one would expect "a1" to be called, but "a2" is called. because nextmethod is called without arguments, it probably takes the unmodified x from the env from which function usemethod was called.
+
+from the docs: "NextMethod invokes the next method (determined by the class vector, either of the object supplied to the generic, or of the first argument to the function containing NextMethod if a method was invoked directly). Normally NextMethod is used with only one argument, generic, but if further arguments are supplied these modify the call to the next method."
 

@@ -1,0 +1,322 @@
+---
+title: "Adv. R Ch 14"
+output: html_notebook
+---
+
+## Classes and methods
+
+Create a bank account R6 class that stores a balance and allows you to deposit and withdraw money. Create a subclass that throws an error if you attempt to go into overdraft. Create another subclass that allows you to go into overdraft, but charges you a fee.
+
+```{r}
+BankAcc <- R6Class("BankAcc", list(
+  balance = 0,
+  deposit = function(x = 1) {
+    self$balance <- self$balance + abs(x)
+    invisible(self)
+  },
+  withdraw = function(x = 1) {
+    self$balance <- self$balance - abs(x)
+    invisible(self)
+  },
+  print = function() {
+    cat("Your account balance is ", self$balance)
+    return(self)
+  }
+))
+
+BankAccStrict <- R6Class("BankAccStrict",
+                         inherit = BankAcc,
+                         public = list(
+                           withdraw = function(x = 1) {
+                             if(self$balance - abs(x) < 0) {
+                               stop("Cannot overdraft account sucker!")
+                             }
+                             self$balance <- self$balance - abs(x)
+                             invisible(self)
+                           }
+                         ))
+BankAccLean <- R6Class("BankAccStrict",
+                         inherit = BankAcc,
+                         public = list(
+                           withdraw = function(x = 1) {
+                             if(self$balance - abs(x) < 0) {
+                               warning("Account overdrafted, will charge exorbitant rates for this.")
+                             }
+                             self$balance <- self$balance - abs(x)
+                             self$balance <- self$balance - abs(self$balance)*0.10
+                             invisible(self)
+                           }
+                         ))
+
+```
+
+```{r}
+new_deposit <- BankAcc$new()
+new_deposit$deposit(100)$withdraw(50)
+print(new_deposit)
+
+new_deposit2 <- BankAccStrict$new()
+new_deposit2$deposit(100)$withdraw(101)
+
+new_deposit3 <- BankAccLean$new()
+new_deposit3$deposit(100)$withdraw(110)
+print(new_deposit3)
+```
+
+Create an R6 class that represents a shuffled deck of cards. You should be able to draw cards from the deck with $draw(n), and return all cards to the deck and reshuffle with $reshuffle(). Use the following code to make a vector of cards.
+
+```{r}
+suit <- c("♠", "♥", "♦", "♣")
+value <- c("A", 2:10, "J", "Q", "K")
+cards <- paste0(rep(value, 4), suit)
+
+Deck <- R6Class("Deck", list(
+  cards = NULL,
+  current = NULL,
+  initialize = function(cards) {
+    self$cards <- cards
+    self$current <- cards
+  },
+  draw = function(n) {
+    drawn <- sample(self$current, n)
+    self$current <- setdiff(self$current, drawn)
+    cat("You drew these cards:", drawn)
+    invisible(self)
+  },
+  reshuffle = function() {
+    self$current <- sample(self$cards, size = length(self$cards))
+    invisible(self)
+  }
+))
+
+new_deck <- Deck$new(cards)
+new_deck$draw(3)
+new_deck$reshuffle()
+new_deck$draw(10)
+new_deck$draw(10)
+```
+
+Why can’t you model a bank account or a deck of cards with an S3 class?
+
+- an S3 class object is not an object that holds internal fields (variables) that are manipulated by its methods (functions) in an environment. Instead, with S3 you get the usual semantics of copy-on-modify.
+
+From adv-r-solutions: 
+"Because S3 classes obey R’s usual semantics of copy-on-modify: every time you deposit money onto your bank account or drew a card from the deck, you’d get a new copy of the object. It is possible to combine S3 classes with an environment (which is how R6 works), but it is ill-advised to create an object that looks like a regular R object but has reference semantics."
+
+4.
+Create an R6 class that allows you to get and set the current timezone. You can access the current timezone with Sys.timezone() and set it with Sys.setenv(TZ = "newtimezone"). When setting the time zone, make sure the new time zone is in the list provided by OlsonNames().
+
+```{r}
+Timezone <- R6Class("Timezone", list(
+  tmz = NULL,
+  initialize = function(tmz = OlsonNames()) {
+    self$tmz <- tmz
+  },
+  get_timezone = function() {
+    print(Sys.timezone())
+    invisible(self)
+  },
+  set_timezone = function(new_tmz) {
+    stopifnot(new_tmz %in% self$tmz)
+    Sys.setenv(TZ = new_tmz)
+    invisible(self)
+  }
+))
+
+new_timezone <- Timezone$new()
+new_timezone$get_timezone()
+new_timezone$set_timezone("Poland")
+new_timezone$get_timezone()
+new_timezone$set_timezone("Europe/Berlin")
+new_timezone$get_timezone()
+```
+- Why would one do it like that though?
+
+Create an R6 class that manages the current working directory. It should have $get() and $set() methods.
+
+```{r}
+Dirmanager <- R6Class("Dirmanager",
+                      public = list(
+                        get = function() getwd(),
+                        set = function(dir) setwd(dir)
+                      )
+                      )
+dirmanage <- Dirmanager$new()
+dirmanage$get()
+dirmanage$set("C:/Users/Francisco/Documents/GitHub/fwilhelm/")
+dirmanage$get()
+```
+
+- now to store the directories one would need to rewrite the function a bit.
+
+Why can’t you model the time zone or current working directory with an S3 class?
+- From book: "A: Because S3 classes are not suitable for modelling state that changes over time. S3 methods should (almost) always return the same result when called with the same inputs."
+- in other words, the get() call for an S3 Class objects should depend on the arguments, not return different results depending on states of the environment.
+
+What base type are R6 objects built on top of? What attributes do they have?
+
+```{r}
+class(Dirmanager)
+class(dirmanage)
+library(sloop)
+str(dirmanage)
+str(unclass(dirmanage))
+attributes(dirmanage)
+```
+- environments. Attributes: $class, with the name of the class from which the object was generated (including superclasses if there are) and the R6 class as subattributes.
+
+## Controlling access
+
+1. Create a bank account class that prevents you from directly setting the account balance, but you can still withdraw from and deposit to. Throw an error if you attempt to go into overdraft.
+
+```{r}
+BankAcc <- R6Class(
+  "BankAcc",
+  private = list(.balance = NA),
+  public = list(
+    initialize = function(balance = 0) {
+      private$.balance <- balance
+    },
+    deposit = function(x = 1) {
+      private$.balance <- private$.balance + abs(x)
+      invisible(self)
+    },
+    withdraw = function(x = 1) {
+      private$.balance <- private$.balance - abs(x)
+      invisible(self)
+    },
+    print = function() {
+      cat("Your account balance is ", private$.balance)
+      invisible(self)
+    }
+  ),
+  active = list(
+    balance = function(value) {
+    if (missing(value)) {
+      private$.balance
+    }
+    else {
+      stop("$balance is read only", call. = FALSE)
+    } }
+  )
+)
+
+new_account <- BankAcc$new()
+new_account$balance <- 2000
+new_account$deposit(10)
+new_account$balance
+new_account$print()
+```
+2. Create a class with a write-only $password field.
+It should have $check_password(password) method that returns TRUE or FALSE, but there should be no way to view the complete password.
+
+```{r}
+Passwd <- R6Class("Passwd",
+                  private = list(.pwd = NULL),
+                  public = list(
+                    initialize = function(pwd) {
+                      private$.pwd <- pwd },
+                    check_password = function(pwd) {
+                      ifelse(private$.pwd == pwd, print("You have been authenticated."), print("Wrong password."))
+                      invisible(self)
+                    }
+                    )
+                  )
+
+new_pwd <- Passwd$new("test01")
+new_pwd$check_password("test02")
+new_pwd$check_password("test01")
+```
+Extend the Rando class with another active binding that allows you to access the previous random value. Ensure that active binding is the only way to access the value.
+```{r}
+Rando <- R6::R6Class(
+  "Rando",
+  private = list(rndval = NA),
+  active = list(
+    random = function(value) {
+      if (missing(value)) {
+        private$rndval <- runif(1)
+        print(private$rndval)
+        invisible(self)
+      } else {
+        stop("Can't set `$random`", call. = FALSE)
+      }
+    },
+    previous = function(value) {
+      if (missing(value)) {
+        print(private$rndval)
+      } else {
+        stop("Can't set `$previous`", call. = FALSE)
+      } }
+  )
+)
+
+x <- Rando$new()
+x$random
+x$previous
+x$previous <- 0.3
+x$random
+
+```
+4. Can subclasses access private fields/methods from their parent? Perform an experiment to find out.
+```{r}
+Passwd <- R6Class("Passwd",
+                  private = list(.pwd = NULL,
+                                 password_types = function(pwd = private$.pwd) {
+                                   contains_digits <- grepl("\\d", pwd)
+                                 }),
+                  public = list(
+                    initialize = function(pwd) {
+                      private$.pwd <- pwd },
+                    check_password = function(pwd) {
+                      ifelse(private$.pwd == pwd, print("You have been authenticated."), print("Wrong password."))
+                      invisible(self)
+                    }
+                    )
+                  )
+
+Passwd2 <- R6Class("Passwd2",
+                  inherit = Passwd,
+                   public = list(
+                    length = function() {
+                      length(private$.pwd)
+                    }
+                    )
+                  )
+
+new_passwd <- Passwd$new("test01")
+Passwd$
+new_passwd2 <- Passwd2$new("test")
+new_passwd2$length()
+```
+Private fields, yes.methods no.
+
+## Reference semantics
+Create a class that allows you to write a line to a specified file. You should open a connection to the file in `$initialize()`, append a line using cat() in `$append_line()`, and close the connection in $finalize().
+
+
+```{r}
+LineWriter <- R6Class("LineWriter",
+                      public = list(
+                        filepath = NULL,
+                        con = NULL,
+                        initialize = function(filepath) {
+                          self$filepath <- filepath
+                          self$con <- file(self$filepath, "w")
+                        },
+                        append_line = function(string) {
+                          write(string, file = self$con, append = TRUE)
+                        },
+                        finalize = function() {
+                          close(self$con)
+                        }
+                      ))
+
+new_writer <- LineWriter$new("test.txt")
+new_writer$append_line("omnium")
+new_writer$append_line("contra")
+
+new_writer$finalize()
+```
+
+
