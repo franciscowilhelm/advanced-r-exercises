@@ -1,0 +1,903 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(rlang)
+library(lobstr)
+```
+
+
+```{r}
+f <- expr(f(x = 1, y = 2))
+str(f)
+f[1]
+f[2]
+f[3]
+lobstr::ast(f(x = 1, y = 2))
+lobstr::ast(f(x, "y", 1))
+```
+18 Exercises
+
+```{r}
+# 2.
+ast(f(g(h(i(1, 2, 3)))))
+ast(f(1, g(2, h(3, i()))))
+ast(f(g(1, 2), h(3, i(4, 5))))
+```
+3. 
+** is translated in the parser to ^, and therefore is printed this way in AST.
+Note that `x` is a function in ggplot2, not the variable. For ->  AST rewrites the tree as <-, probably because -> is parsed as such.
+
+4. <inline srcref> is used for the body of the function including all comments in R. "Like all objects in R, functions can also possess any number of additional attributes(). One attribute used by base R is srcref, short for source reference. It points to the source code used to create the function. The srcref is used for printing because, unlike body(), it contains code comments and other formatting." 
+
+5. What does the call tree of an if statement with multiple else if conditions look like? Why?
+```{r}
+ast(if(x == 1) {x} else if(x == 2) {"bonk"} else if(x > 3) {"yeah"})
+```
+Peculiar is that else if gets shown as if in the tree. Possibly else only structures the code (syntactic sugar, readability?), but underlying its always if.
+
+## Expressions exercises
+
+1.
+Which two of the six types of atomic vector can’t appear in an expression? Why? Similarly, why can’t you create an expression that contains an atomic vector of length greater than one?
+
+- raw and complex require calls. Similar with expressions with length greater one, because they are calls to `c` and not atomics.
+
+2. What happens when you subset a call object to remove the first element? e.g. expr(read.csv("foo.csv", header = TRUE))[-1]. Why?
+
+```{r}
+x <- expr(read.csv("foo.csv", header = TRUE))[-1]
+y <- expr(read.csv("foo.csv", header = TRUE))
+z <- expr(sum(2, header = TRUE))
+
+is.call(x)
+is.call(y)
+```
+- in the example the read.csv is removed and foo.csv, the first argument, becomes the function that is called. Hence, it remains a call. It will always remain a call with the first argument of the original call moving to teh front in the tree becoming the function called.
+
+
+3.
+```{r}
+x <- 1:10
+
+calla <- call2(median, x, na.rm = TRUE)
+callb <- call2(expr(median), x, na.rm = TRUE)
+callc <- call2(median, expr(x), na.rm = TRUE)
+calld <- call2(expr(median), expr(x), na.rm = TRUE)
+
+x <- 10:20
+
+eval(calla)
+eval(callb)
+eval(callc)
+eval(calld)
+```
+with expr() the argument is taken as an expression, without expr() it is evaluated. Here, median and x become evaluated in some, but are just expressions in others. That leads to the median function being pritnted when median is not in an expression.
+WE see the differences when evaluated the saved calls. A and b evaluate x, so when call is evaluated, the older x from that call env are used. When x is kept as expression, evaluation takes place only when teh call is evaluated, leading to the use of the new x.
+Similar would happen when median would be overwritten.
+
+
+4. rlang::call_standardise() doesn’t work so well for the following calls. Why? What makes mean() special?
+```{r}
+call_standardise(quote(mean(1:10, na.rm = TRUE)))
+#> mean(x = 1:10, na.rm = TRUE)
+call_standardise(quote(mean(n = T, 1:10)))
+#> mean(x = 1:10, n = T)
+call_standardise(quote(mean(x = 1:10, , TRUE)))
+#> mean(x = 1:10, , TRUE)
+```
+mean uses ... for further arguments, thereby the call cant be standardized.
+
+Why does this code not make sense?
+```{r}
+x <- expr(foo(x = 1))
+names(x) <- c("x", "y")
+```
+
+- We make an expression for a function with one argument, then name the foo with x and the x with y, resulting in x = 1 becoming y = 1. Non-arguments are not named, so the x does nothing for foo. (metadata that is ignored)
+
+Construct the expression if(x > 1) "a" else "b" using multiple calls to call2(). How does the code structure reflect the structure of the AST?
+
+```{r}
+ast(if(x > 1) {"a"} else {"b"})
+
+call2("if", call2(">", sym("x"), 1), "a", "b")
+
+
+```
+
+This requires infix call for >. x is used as sym not as string, therefore x("sym"). The syntax is compact in that it uses "a" and "b" as arguments to if rather than working with brackets (like show in the ast expression).
+
+
+# Parsing and grammar exercises
+
+```{r}
+ast(f((1)))
+ast(`(`(1 + 1))
+```
+The first bracket in the f line are the brackets that belong to the function call f(), the second can be rewritten as `(`. The reverse order for the second line: `(` is called explictly, the second brackets belong to  `(`(). This happens because ( can be a call to `(`, or a part of the syntax when calling a function.
+
+2. = can also be used in two ways. Construct a simple example that shows both uses.
+```{r}
+ast(list(a = 1))
+a = 1
+```
+first line sets values in a list (naming an argument), second works like the assignment operator
+
+Does -2^2 yield 4 or -4? Why?
+
+```{r}
+-2^2
+ast(-2^2)
+```
+-4 because the minus is parsed last, i.e. -(2^2). ^ has precedencen.
+
+What does !1 + !1 return? Why?
+```{r}
+ast(!1 + !1)
+!1 + !1
+1 + !1
+!1
+```
+Because the first ! is evaluated last, FALSE is returned. !1 evaluates to FALSE.
+
+5. Why does x1 <- x2 <- x3 <- 0 work? Describe the two reasons.
+```{r}
+ast(x1 <- x2 <- x3 <- 0)
+x1 <- x2 <- x3 <- 0
+```
+Precedence with <- : The last one is evaluated first (right-precedence). The second reason? Dunno
+From the book: "The other reason is that <- invisibly returns the value on the right-hand side."
+
+
+6. Compare the ASTs of x + y %+% z and x ^ y %+% z. What have you learned about the precedence of custom infix functions?
+```{r}
+ast(x + y %+% z)
+ast(x ^ y %+% z)
+```
+Custom infixes seem to take a "middle" precedence. ^ is evaluated earlier, + later (breaking left-associative parsing).
+
+7. What happens if you call parse_expr() with a string that generates multiple expressions? e.g. parse_expr("x + 1; y + 1")
+```{r}
+parse_expr("x + 1; y + 1")
+```
+Does not work.
+
+```{r}
+parse_expr("a +")
+parse_expr("f())")
+f())
+```
+We get error messages similar to those we would get when runnign the expression directl.y
+
+```{r}
+expr <- expr(g(a + b + c + d + e + f + g + h + i + j + k + l + 
+  m + n + o + p + q + r + s + t + u + v + w + x + y + z))
+
+deparse(expr)
+str(deparse(expr))
+expr_text(expr)
+
+```
+deparse preserves the line breaks by breakign the expression into a character vector of length lines (which is not sth we would usualyl want). expr_text preserves the line break by returning a single character string with `\n` for the line breaks.
+
+
+10. pairwise.t.test() assumes that deparse() always returns a length one character vector. Can you construct an input that violates this expectation? What happens?
+```{r}
+reallylongdatasetstringnamethatisreallyjustfuckinglongmate <- mtcars %>% mutate(cyl = as.factor(cyl))
+pairwise.t.test(reallylongdatasetstringnamethatisreallyjustfuckinglongmate$mpg, reallylongdatasetstringnamethatisreallyjustfuckinglongmate$cyl)
+expr <- expr(pairwise.t.test(
+  reallylongdatasetstringnamethatisreallyjustfuckinglongmate$mpg,
+                             reallylongdatasetstringnamethatisreallyjustfuckinglongmate$cyl))
+deparse(expr)
+pairwise.t.test(deparse(expr))
+pairwise.t.test(expr_text(expr))
+
+```
+
+Because the second argument is on a new line, it does not work.
+
+## Walking AST with recursive functions
+
+```{r}
+expr_type <- function(x) {
+  if (rlang::is_syntactic_literal(x)) {
+    "constant"
+  } else if (is.symbol(x)) {
+    "symbol"
+  } else if (is.call(x)) {
+    "call"
+  } else if (is.pairlist(x)) {
+    "pairlist"
+  } else {
+    typeof(x)
+  }
+}
+
+switch_expr <- function(x, ...) {
+  switch(expr_type(x),
+    ...,
+    stop("Don't know how to handle type ", typeof(x), call. = FALSE)
+  )
+}
+
+logical_abbr_rec <- function(x) {
+  switch_expr(x,
+    # Base cases
+    constant = FALSE,
+    symbol = as_string(x) %in% c("F", "T"),
+
+    # Recursive cases
+    call = ,
+    pairlist = purrr::some(x, logical_abbr_rec)
+  )
+}
+
+logical_abbr <- function(x) {
+  logical_abbr_rec(enexpr(x))
+}
+```
+
+logical_abbr() returns TRUE for T(1, 2, 3). How could you modify logical_abbr_rec() so that it ignores function calls that use T or F?
+
+```{r}
+logical_abbr(T(1,2,3))
+
+x <- expr(T(1,2,3))
+x[1] 
+x[1] == "T()" # what we need to find out.
+# apparently not, as call seems to be evaluated differently... see below
+
+find_T_call <- function(x) {
+  # print(x[[1]])
+  if (x[[1]] == "T") {
+    children <- as.list(x)[-1]
+  } else {
+    children <- as.list(x)
+  }
+   purrr::some(children, logical_abbr_rec)
+}
+
+logical_abbr_rec <- function(x) {
+  switch_expr(x,
+    # Base cases
+    constant = FALSE,
+    symbol = as_string(x) %in% c("F", "T"),
+
+    # Recursive cases
+    call = find_T_call(x),
+    pairlist = purrr::some(x, logical_abbr_rec)
+  )
+}
+
+logical_abbr(T(1,2,3))
+logical_abbr(c(T,F,T))
+
+```
+
+We need to modify call such that a T is not matched in symbol if it the name of the function in teh call (which would be the first position of the call object).
+
+2. logical_abbr() works with expressions. It currently fails when you give it a function. Why? How could you modify logical_abbr() to make it work? What components of a function will you need to recurse over?
+```{r}
+logical_abbr(function(x = TRUE) {
+  g(x + T)
+})
+
+logical_abbr(function(x = TRUE) {
+  g(x + TRUE)
+})
+
+ast(logical_abbr(function(x = TRUE) {
+    g(x + T)
+}))
+
+
+```
+Function has two subnodes: arguments and body.
+First function given in example actually runs. Second function: Current error is strange: where is integer , T in the addition?
+Body should evaluate fine, if it is evaluated as in the AST.
+Seems like the logical_abbr has to be amended such that it works with the structure of functions...
+
+
+3. Modify find_assign to also detect assignment using replacement functions, i.e. names(x) <- y.
+
+
+Original:
+```{r}
+flat_map_chr <- function(.x, .f, ...) {
+  purrr::flatten_chr(purrr::map(.x, .f, ...))
+}
+
+
+find_assign_rec <- function(x) {
+  switch_expr(x,
+    # Base cases
+    constant = ,
+    symbol = character(),
+
+    # Recursive cases
+    pairlist = flat_map_chr(as.list(x), find_assign_rec),
+    call = {
+      if (is_call(x, "<-")) {
+        as_string(x[[2]])
+      } else {
+        flat_map_chr(as.list(x), find_assign_rec)
+      }
+    }
+  )
+}
+find_assign <- function(x) unique(find_assign_rec(enexpr(x)))
+
+find_assign({
+  a <- 1
+  {
+    b <- 2
+  }
+})
+```
+
+Modified:
+```{r}
+find_assign(x <- y)
+
+find_assign(names(x) <- y)
+
+as_string(expr(names(x) <- y))
+ast(names(x) <- y)
+```
+Error is cant convert a call to a string. Will have to modify that segment, probably because as_string fails here.
+is_call(with name = names) fails, because the name =  seems to look only at the <- operator in the middle, not the lhs or rhs.
+
+```{r}
+find_assign_rec <- function(x) {
+  switch_expr(
+    x,
+    # Base cases
+    constant = ,
+    symbol = character(),
+    
+    # Recursive cases
+    pairlist = flat_map_chr(as.list(x), find_assign_rec),
+    call = {
+      if (is_call(x, "<-")) {
+        if (any(grepl("names", x[[2]]))) {
+          as_string(x[[2]][[2]])
+        }
+        else {
+          as_string(x[[2]])
+        }
+      } else {
+        flat_map_chr(as.list(x), find_assign_rec)
+      }
+    }
+  )
+}
+
+find_assign(names(x) <- y)
+```
+
+Solution above: in assignment call, look for names (with grepl). The structure of the call then is a call within a call (See AST ), we need to extract the argument of names.
+A solution that relies on recursive again: https://advanced-r-solutions.rbind.io/expressions.html#ast-funs and generalizes better
+
+Write a function that extracts all calls to a specified function.
+```{r}
+
+# TODO: needs to be recursive
+return_call <- function(x, fun) {
+  
+  if (is_call(x, fun)) {
+    return(x[[-1]])
+  }
+}
+
+find_call_rec <-  function(x) {
+  switch_expr(
+    x,
+    # Base cases
+    constant = ,
+    symbol = character(),
+    
+    # Recursive cases
+    pairlist = ,
+    call = find_call()
+  )
+}
+ast(f(mean(x)))
+
+logical_abbr <- function(x) {
+  logical_abbr_rec(enexpr(x))
+}
+
+find_call <- function(x) {
+  return_call(enexpr())
+}
+
+find_call(f(mean(x)))
+```
+From the example we would need to extract the call mean(x) when the specified function is "mean". Apparently from teh R solutions something different is wanted - returning all calls that are in an expression; this is rather complex.
+
+# 19. Quasiquotations
+
+```{r}
+cement <- function(...) {
+  args <- ensyms(...)
+  paste(purrr::map(args, as_string), collapse = " ")
+}
+
+cement(hey, make, this, string)
+```
+Ensym "defuses" the arguments and puts them into a list, which map can use as .x argument. 
+Therefore the function cement quotes its arguments (loosely speaking, puts quotation marks around each of its arguments).
+
+This can be pretty helfpul, but poses a problem when we really want the variable and not the quoted argument. In other words, we need to unquote the input.
+
+```{r}
+cement(Good, !!time, !!name)
+
+paste("Good", time, name)
+cement(Good, !!time, !!name)
+```
+Unquoting is achieved by using double bangs.
+
+Distinction is made between evaluated and quoted arguments: cement quotes (and processes in custom way), whereas paste evaluates.
+
+
+## Motivation Exercises
+
+1. For each function in the following base R code, identify which arguments are quoted and which are evaluated.
+
+```{r}
+library(MASS)
+
+MASS
+# quoted
+
+mtcars2 <- subset(mtcars, cyl == 4)
+# cyl is quoted, mtcars is evaluated
+
+with(mtcars2, sum(vs))
+# vs is quoted, mtcars2 is evaluated
+
+sum(mtcars2$am)
+# am quoted by $
+
+rm(mtcars2)
+# evaluated? No, from book it says its input is cahcedh and quoted
+
+```
+
+2. For each function in the following tidyverse code, identify which arguments are quoted and which are evaluated.
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+by_cyl <- mtcars %>%
+  group_by(cyl) %>%
+  summarise(mean = mean(mpg))
+
+cyl
+mpg #thats a different mpg
+
+# cyl and mpg are quoted.
+
+ggplot(by_cyl, aes(cyl, mean)) + geom_point()
+# cyl, mean are quoted
+mean
+```
+## Quoting
+
+as developer we want to use `enexpr()` rather than `expr()` inside functions we write to capture things the user supplies; expr is useful for exploration but not for writing functions, as it captures what YOU, the developer, supplies.
+```{r}
+f1 <- function(x) expr(x)
+f1(a + b + c)
+f2 <- function(x) enexpr(x)
+f2(a + b + c)
+```
+
+For multiple expressions, `enexprs()`.
+
+Exercises
+
+1. How is expr() implemented? Look at its source code.
+
+expr is a wrapper fro enexpr, enexpr wraps .Call with specific argument that calls rlang_enexpr which is a C/C++ file,  and substitutes its input argument. 
+
+2. Compare and contrast the following two functions. Can you predict the output before running them?
+
+```{r}
+f1 <- function(x, y) {
+  exprs(x = x, y = y)
+}
+f2 <- function(x, y) {
+  enexprs(x = x, y = y)
+}
+f1(a + b, c + d)
+f2(a + b, c + d)
+```
+
+f1 will work independent of what is supplied to x and y in the function call, whereas f2 will take the x and y from the arguments of the function call.
+
+3. What happens if you try to use enexpr() with an expression (i.e.  enexpr(x + y) ? What happens if enexpr() is passed a missing argument?
+
+```{r}
+enexpr(x + y)
+x <- enexpr()
+x <- enexpr(b = )
+
+```
+Enexpr takes only symbols, not expressions. A missing argument will actually be saved - as a missing argument! May be helpful for debugging and checking user input. An argument with missing value cannot be passed though.
+
+4. How are exprs(a) and exprs(a = ) different? Think about both the input and the output.
+```{r}
+exprs(a)
+exprs(a = )
+```
+first will evaluate a (whatever it will be), second will make a list with a = (where a will remain a).
+
+5. What are other differences between exprs() and alist()? Read the documentation for the named arguments of exprs() to find out.
+```{r}
+
+```
+
+exprs can be specified how unnamed arguments are handled with .named, how to work with empty arguments (.ignore_empty), and supports unquoting (this already pointed out in the book). alist cannot do that.
+
+6. The documentation for substitute() says ... Create examples.
+
+```{r}
+# If it is not a bound symbol in env, it is unchanged.
+substitute(x+y+z, list(x = 1, y = 1))
+
+# If it is a promise object (i.e., a formal argument to a function) the expression slot of the promise replaces the symbol.
+substitute(mean(x, na.rm = log), list(x = c(2,3,4), log = FALSE))
+
+#If it is an ordinary variable, its value is substituted, unless env is .GlobalEnv in which case the symbol is left unchanged.
+y <- 1
+substitute(y, env = .GlobalEnv)
+```
+
+## Unqoting Exercises
+
+```{r}
+xy <- expr(x + y)
+xz <- expr(x + z)
+yz <- expr(y + z)
+abc <- exprs(a, b, c)
+
+expr(!!xy/!!yz)
+expr(-(!!xz)^(!!yz))
+expr(!!xy+!!yz-!!xy)
+expr(atan2(!!xy, !!yz))
+expr(sum(!!xy, !!xy, !!yz))
+expr(sum(!!!abc)) 
+expr(mean(c(!!!abc), na.rm = TRUE))
+expr(foo(a = !!xy, b = !!yz))
+```
+abc requires !!! because it is one too many; !! would give a list with a, b, c as values.
+
+```{r}
+(a <- expr(mean(1:10)))
+#> mean(1:10)
+(b <- expr(mean(!!(1:10))))
+#> mean(1:10)
+identical(a, b)
+#> [1] FALSE
+```
+
+
+The second evaluates 1:10, the first retains it as expression. First is more natural since we would never expect 1:10 to do anything other than building the numerical vector, sequence from 1:10
+
+
+
+## 19. 6 dot dot dot
+
+
+Tidy dots is a set of features that is enabled in tidyverse and allows to make use of the !! and !!! operators inside function arguments. Base functions dont support it.
+
+```{r}
+dfs <- list(
+  a = data.frame(x = 1, y = 2),
+  b = data.frame(x = 3, y = 4)
+)
+
+vars <- paste0('dfs$', names(dfs))
+rbind(!!!vars) #base r functions dont support double or triple bangs, or what is called "tidy dots".
+bind_rows(!!!dfs) # uses tidy dots
+do.call("rbind", dfs) # is the base R equivalent
+
+```
+
+
+## dot dot dot exercises
+
+One way to implement exec() is shown below. Describe how it works. What are the key ideas?
+```{r}
+library(rlang)
+exec <- function(f, ..., .env = caller_env()) {
+  args <- list2(...)
+  do.call(f, args, envir = .env)
+}
+
+exec(mean, runif(50))
+exec(data.frame, x = c(1,2,4), y = c(3,5,7))
+
+varname <- "z"
+varval <- c(6,7,8)
+exec(data.frame, x = c(1,2,4), y = c(3,5,7), !!varname := varval)
+
+```
+It is a function that works like exec but restricts itself to caller environment and supports tidy dots arguments via list2.
+
+2. Carefully read the source code for interaction(), expand.grid(), and par(). Compare and contrast the techniques they use for switching between dots and list behaviour.
+
+interaction: when 1 argument and list, it converts the list (the first argument given) to its components. 
+ 
+From expand.grid:
+```{r}
+testfun <- function(...) {
+  nargs <- length(args <- list(...))
+if (!nargs) 
+    return(as.data.frame(list()))
+if (nargs == 1L && is.list(a1 <- args[[1L]])) 
+    nargs <- length(args <- a1)
+if (nargs == 0L) 
+    return(as.data.frame(list()))
+}
+
+testfun(list(a = 1, b= 2, c =3))
+```
+
+args is the list of ..., nargs the length of that list. If the length is 1 and that is a list (as in interaction), the components of the list are assigned.
+The way its written is very unlegible because assignments happen in functions such as is.list()
+
+So expand.grid and interaction are similiar in that they strip one level of the list when the arguments in ... are length 1 and a list.
+par seems to be more complex because it checks also for "is.null" of the first argument and checks if all are character.
+
+3. Explain the problem with this definition of set_attr()
+```{r}
+set_attr <- function(x, ...) {
+  attr <- rlang::list2(...)
+  attributes(x) <- attr
+  x
+}
+set_attr(1:10, x = 10)
+#> Error in attributes(x) <- attr: attributes must be named
+set_attr(1:10, x = 10)
+
+set_attr <- function(x, ...) {
+  attr <- rlang::dots_list(..., .named = TRUE)
+  print(attr)
+  attributes(x) <- attr
+  x
+}
+set_attr(1:10, x = 10)
+```
+
+Since attributes needs names, attr must be either checked to have names or they must be construed. With dots_list this is possible.
+
+## Case studies exercises
+
+1. In the linear-model example, we could replace the expr() in reduce(summands, ~ expr(!!.x + !!.y)) with call2(): reduce(summands, call2, "+"). Compare and contrast the two approaches. Which do you think is easier to read?
+
+```{r}
+linear <- function(var, val) {
+  var <- ensym(var)
+  coef_name <- map(seq_along(val[-1]), ~ expr((!!var)[[!!.x]]))
+
+  summands <- map2(val[-1], coef_name, ~ expr((!!.x * !!.y)))
+  summands <- c(val[[1]], summands)
+
+  reduce(summands, ~ expr(!!.x + !!.y))
+}
+
+linear(x, c(10, 5, -4))
+#> 10 + (5 * x[[1L]]) + (-4 * x[[2L]])
+
+linear2 <- function(var, val) {
+  var <- ensym(var)
+  coef_name <- map(seq_along(val[-1]), ~ expr((!!var)[[!!.x]]))
+
+  summands <- map2(val[-1], coef_name, ~ expr((!!.x * !!.y)))
+  summands <- c(val[[1]], summands)
+
+  reduce(summands, call2, "+")
+}
+
+linear2(x, c(10, 5, -4))
+
+```
+
+Does not work as stated. But it any case version 1 would be more legible in the sense that you immediately see what the "summands" are and what the addition achieves. In the call2 version we would need to go back and look at what summands consists of.
+
+2. Re-implement the Box-Cox transform defined below using unquoting and new_function():
+```{r}
+bc <- function(lambda) {
+  if (lambda == 0) {
+    function(x) log(x)
+  } else {
+    function(x) (x ^ lambda - 1) / lambda
+  }
+}
+bc_creator <- function(lambda) {
+  lambda <- enexpr(lambda)
+  if(!!lambda == 0) {
+    new_function(exprs(x =), expr(log(x)))
+  } else {new_function(exprs(x =), expr((x ^ !!lambda - 1) / !!lambda))}
+}
+
+bc_creator(2)(4)
+bc_creator(0)(2)
+
+```
+Still seems strange to me to think like that...
+
+3 .Re-implement the simple compose() defined below using quasiquotation and new_function():
+```{r}
+compose <- function(f, g) {
+  function(...) f(g(...))
+}
+
+compose2 <- function(f,g) {
+  f <- enexpr(f)
+  g <- enexpr(g)
+  
+  new_function(exprs(... =  ),
+               expr((!!f)((!!g)(...))))
+  
+}
+
+compose(sum, log)
+compose(sum, log)(c(1,2))
+compose2(sum, log)
+
+```
+Horrible notation with (!!f) instead of !!f and the exprs(... = ). I dont think I would use that.
+
+
+# 20 Evaluation
+
+```{r}
+library(rlang)
+library(purrr)
+```
+
+
+Eval is strangely implemented:
+```{r}
+eval(x + y, env(x = 3, y = 2))
+eval(expr(x + y), env(x = 3, y = 2))
+```
+
+One would expect it evaluates the x+y in the environment specified (we would expect quotation not direct eval), instead it just evaluates it without it... To force the correct ervaluation, we have to use an expression.
+
+## 20.2 eval basics assignment
+
+2. Predict the results of the following lines of code:
+```{r}
+eval(expr(eval(expr(eval(expr(2 + 2))))))
+eval(eval(expr(eval(expr(eval(expr(2 + 2)))))))
+expr(eval(expr(eval(expr(eval(expr(2 + 2)))))))
+```
+
+1 returns just 4 (it evaluates the whole shenagigans), which ultimately is 2+2.
+2 is 1 as argument to an eval(), so a double evaluation. It is also 4, because its just eval(4).
+3 is the expression of all that is stated within - its never evaluated because it is encapsulated in an expression.
+
+3. Fill in the function bodies below to re-implement get() using sym() and eval(), and assign() using sym(), expr(), and eval(). Don’t worry about the multiple ways of choosing an environment that get() and assign() support; assume that the user supplies it explicitly.
+
+```{r}
+# name is a string
+get2 <- function(name, env) {
+  name <- sym(name)
+  eval(name)
+}
+assign2 <- function(name, value, env = caller_env()) {
+  name <- sym(name)
+  assignthis <- expr(!!name <- !!value)
+  eval(assignthis, env)
+}
+
+assign2_false <- function(name, value) {
+  name <- sym(name)
+  assignthis <- expr(!!name <- !!value)
+  eval(assignthis)
+  eval(expr(!!name))
+}
+
+x <- 2
+get("x")
+get2("x")
+
+assign("x", 4)
+assign2("x", 3)
+assign2_false("x", 5) # x is 5 locally, but its not assigned in caller env.
+
+```
+4. Modify source2() so it returns the result of every expression, not just the last one. Can you eliminate the for loop?
+```{r}
+source2 <- function(path, env = caller_env()) {
+  file <- paste(readLines(path, warn = FALSE), collapse = "\n")
+  exprs <- parse_exprs(file)
+
+  res <- NULL
+  for (i in seq_along(exprs)) {
+    res <- eval(exprs[[i]], env)
+  }
+
+  invisible(res)
+}
+
+source2_mod <- function(path, env = caller_env()) {
+  file <- paste(readLines(path, warn = FALSE), collapse = "\n")
+  exprs <- parse_exprs(file)
+
+  walk(exprs, function(x) {
+    res <- eval(x, env)
+    invisible(res)
+  })
+  }
+
+source2("factor.R")
+rm(factor, new_factor)
+source2_mod("factor.R")
+(source2_mod("factor.R"))
+```
+We can make base::local() slightly easier to understand by spreading out over multiple lines: Explain how local() works in words. (Hint: you might want to print(call) to help understand what substitute() is doing, and read the documentation to remind yourself what environment new.env() will inherit from.)
+```{r}
+local3 <- function(expr, envir = new.env()) {
+  call <- substitute(eval(quote(expr), envir))
+  print(call)
+  eval(call, envir = parent.frame())
+}
+
+x <- local3(x+y, envir = list(x = 3, y = 3))
+
+```
+Structurally, local is an eval nested in an substitute nested in eval.parent.
+1. The eval quotes the expr given by the user, using environment given by the user.
+2. This eval is not evaluated but substituted, such that in this case envir is evaluated and expr are unquoted. This consistutes tzhe call
+3. the call is evaluated using envir parent.frame.
+
+### 20.3 exercises quosures
+
+1. Predict what each of the following quosures will return if evaluated.
+```{r}
+q1 <- new_quosure(expr(x), env(x = 1))
+q1
+#> <quosure>
+#> expr: ^x
+#> env:  0x7fd53eeafe58
+
+q2 <- new_quosure(expr(x + !!q1), env(x = 10))
+q2
+#> <quosure>
+#> expr: ^x + (^x)
+#> env:  0x7fd53eae15a8
+
+q3 <- new_quosure(expr(x + !!q2), env(x = 100))
+q3
+#> <quosure>
+#> expr: ^x + (^x + (^x))
+#> env:  0x7fd53cc40578
+```
+
+
+q1 will eval to 1.
+q2 will eval to 11.
+q3 will eval to 111.
+This assumes all quosures keep their environments, as indicated by the colors when printing.
+```{r}
+eval_tidy(q1)
+eval_tidy(q2)
+eval_tidy(q3)
+```
+
+2. Write an enenv() function that captures the environment associated with an argument. (Hint: this should only require two function calls.)
+```{r}
+
+```
+
+would need to reread the environment chapter..
+
